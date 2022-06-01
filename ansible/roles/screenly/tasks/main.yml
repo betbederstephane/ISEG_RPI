@@ -1,0 +1,124 @@
+- name: Ensure folders exist
+  file:
+    path: "/home/pi/{{ item }}"
+    state: directory
+    owner: pi
+    group: pi
+  with_items:
+    - .screenly
+    - .config
+    - screenly_assets
+
+- name: Copy Screenly default assets file
+  copy:
+    owner: pi
+    group: pi
+    src: default_assets.yml
+    dest: /home/pi/.screenly/default_assets.yml
+    force: yes
+
+- name: Remove deprecated parameter "listen"
+  lineinfile:
+    regexp: '^.*listen.*'
+    state: absent
+    dest: /home/pi/.screenly/screenly.conf
+
+- name: Install pip dependencies
+  pip:
+    requirements: /home/pi/screenly/requirements/requirements.host.txt
+    extra_args: "--no-cache-dir --upgrade"
+
+- name: Remove screenly_utils.sh
+  file:
+    state: absent
+    path: /usr/local/bin/screenly_utils.sh
+
+- cron:
+    name: Cleanup screenly_assets
+    state : absent
+    user: pi
+
+- name: Download upgrade_screenly.sh from github repository
+  get_url:
+    url: https://raw.githubusercontent.com/Screenly/screenly-ose/master/bin/install.sh
+    dest: /usr/local/sbin/upgrade_screenly.sh
+    mode: 0700
+    owner: root
+    group: root
+    force: yes
+
+- name: Copy screenly_overrides
+  copy:
+    src: screenly_overrides
+    dest: /etc/sudoers.d/screenly_overrides
+    mode: 0440
+    owner: root
+    group: root
+
+- name: Copy screenly_usb_assets.sh
+  copy:
+    src: screenly_usb_assets.sh
+    dest: /usr/local/bin/screenly_usb_assets.sh
+    mode: 0755
+    owner: root
+    group: root
+
+- name: Installs autoplay udev rule
+  copy:
+    src: 50-autoplay.rules
+    dest: /etc/udev/rules.d/50-autoplay.rules
+    mode: 644
+    owner: root
+    group: root
+
+- name: Copy systemd-udevd service
+  copy:
+    src: /lib/systemd/system/systemd-udevd.service
+    dest: /etc/systemd/system/systemd-udevd.service
+
+- name: Configure systemd-udevd service
+  lineinfile:
+    dest: /etc/systemd/system/systemd-udevd.service
+    regexp: '^MountFlags='
+    line: 'MountFlags=shared'
+
+- name: Copy screenly systemd units
+  copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+  with_items: "{{ screenly_systemd_units }}"
+
+- name: Remove plymouth-quit-wait.service
+  file:
+    state: absent
+    dest: /lib/systemd/system/plymouth-quit-wait.service
+
+- name: Remove plymouth-quit.service
+  file:
+    state: absent
+    dest: /lib/systemd/system/plymouth-quit.service
+
+- name: Enable screenly systemd services
+  command: systemctl enable {{ item }} chdir=/etc/systemd/system
+  with_items: "{{ screenly_systemd_units }}"
+
+- name: Check if deprecated systemd services exists
+  stat:
+    path: /etc/systemd/system/X.service
+  register: x_service
+
+- set_fact: x_service_exist="{{x_service.stat.exists}}"
+
+- name: Disable deprecated systemd services
+  systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: no
+  with_items: "{{ deprecated_screenly_systemd_units }}"
+  when: x_service_exist
+
+- name: Remove deprecated systemd units
+  file:
+    path: "/etc/systemd/system/{{ item }}"
+    state: absent
+  with_items: "{{ deprecated_screenly_systemd_units }}"
